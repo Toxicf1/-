@@ -1,0 +1,93 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>로블록스 끝말잇기 검색기</title>
+<style>
+:root{color-scheme:dark;--bg:#0d1117;--panel:#161b22;--line:#30363d;--text:#e6edf3;--muted:#8b949e;--accent:#58a6ff;--good:#3fb950;--warn:#d29922}
+*{box-sizing:border-box} body{margin:0;background:var(--bg);color:var(--text);font-family:system-ui,-apple-system,"Noto Sans KR",sans-serif}
+main{max-width:1000px;margin:auto;padding:28px 16px 60px}
+h1{margin:0 0 6px;font-size:28px}.sub{color:var(--muted);font-size:14px;line-height:1.6}
+.search{display:flex;gap:8px;margin:20px 0}.search input{flex:1;padding:16px;border-radius:14px;border:1px solid var(--line);background:var(--panel);color:var(--text);font-size:18px;outline:none}.search button{border:0;border-radius:14px;padding:0 20px;background:var(--accent);color:#06121f;font-weight:800;font-size:16px}
+.quick{display:flex;gap:7px;flex-wrap:wrap;margin-bottom:18px}.quick button{background:#21262d;color:var(--text);border:1px solid var(--line);border-radius:999px;padding:7px 11px}
+.stats{color:var(--muted);font-size:13px;margin:10px 0 18px}.grid{display:grid;grid-template-columns:1fr 1fr;gap:14px}.card{background:var(--panel);border:1px solid var(--line);border-radius:16px;padding:16px}.card h2{margin:0 0 5px;font-size:19px}.hint{color:var(--muted);font-size:13px;margin:0 0 12px;line-height:1.5}.count{font-size:13px;color:var(--accent)}
+.list{display:flex;flex-wrap:wrap;gap:7px;max-height:530px;overflow:auto;padding-right:4px}.word{background:#21262d;border:1px solid #30363d;color:var(--text);padding:8px 10px;border-radius:9px;cursor:pointer;word-break:break-all}.word:hover{border-color:var(--accent)}
+.empty{color:var(--muted);padding:18px 0}.full{grid-column:1/-1}.tag{display:inline-block;margin-left:7px;font-size:11px;padding:2px 6px;border-radius:999px;background:#1f6feb22;color:var(--accent)}
+footer{margin-top:20px;color:var(--muted);font-size:12px;line-height:1.6;border-top:1px solid var(--line);padding-top:15px}
+@media(max-width:720px){main{padding-top:20px}.grid{grid-template-columns:1fr}.search input{min-width:0}.search button{padding:0 15px}.list{max-height:360px}}
+</style>
+</head>
+<body>
+<main>
+  <h1>로블록스 끝말잇기 검색기</h1>
+  <div class="sub">제공된 전용 단어 목록만 사용합니다. 단어를 누르면 그 단어의 끝 글자로 다시 검색할 수 있습니다.</div>
+
+  <div class="search">
+    <input id="q" placeholder="예: 가, 락, 가가…" autocomplete="off">
+    <button id="go">검색</button>
+  </div>
+  <div class="quick" id="quick"></div>
+  <div class="stats" id="stats">단어 목록 불러오는 중…</div>
+
+  <div class="grid">
+    <section class="card">
+      <h2>즉시 한방단어 <span class="tag">1수 종료</span></h2>
+      <p class="hint">이 단어의 마지막 글자로 시작하는 등록 단어가 없는 경우입니다.</p>
+      <div class="count" id="oneCount"></div><div class="list" id="one"></div>
+    </section>
+    <section class="card">
+      <h2>루트 단어</h2>
+      <p class="hint">이 단어 뒤에도 파일에 등록된 후속 단어가 있어 일반적으로 계속 이어갈 수 있습니다.</p>
+      <div class="count" id="rootCount"></div><div class="list" id="root"></div>
+    </section>
+    <section class="card full">
+      <h2>검색된 전체 단어</h2>
+      <p class="hint">기본 검색은 입력한 글자로 시작하는 단어를 찾습니다. 전체 단어가 너무 많으면 500개까지만 먼저 표시합니다.</p>
+      <div class="count" id="allCount"></div><div class="list" id="all"></div>
+    </section>
+  </div>
+
+  <footer>
+    분류 기준: 이 버전은 제공된 단어 파일만 보고 “마지막 글자로 시작하는 후속 단어가 존재하는지”를 계산합니다.
+    따라서 외부 엔진의 2수·3수 한방, 양보단어, 순환단어 등 고급 게임 이론 분류와 완전히 동일하다고 보장하지 않습니다.
+  </footer>
+</main>
+<script>
+let WORDS=[], byStart=new Map();
+const $=id=>document.getElementById(id);
+function esc(s){return s.replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]))}
+function addWords(id, arr, limit=500){
+  const box=$(id); box.innerHTML="";
+  if(!arr.length){box.innerHTML='<div class="empty">없음</div>';return}
+  arr.slice(0,limit).forEach(w=>{
+    const b=document.createElement("button"); b.className="word"; b.textContent=w;
+    b.onclick=()=>{ $("q").value=w.slice(-1); search(); window.scrollTo({top:0,behavior:"smooth"}); };
+    box.appendChild(b);
+  });
+  if(arr.length>limit){const d=document.createElement("div");d.className="empty";d.textContent=`처음 ${limit}개만 표시`;box.appendChild(d)}
+}
+function search(){
+  const q=$("q").value.trim();
+  if(!q){$("stats").textContent="검색할 글자나 단어를 입력하세요.";["one","root","all"].forEach(id=>$(id).innerHTML="");return}
+  const matches=WORDS.filter(w=>w.startsWith(q));
+  const one=matches.filter(w=>!(byStart.get(w.at(-1))||[]).length);
+  const root=matches.filter(w=>(byStart.get(w.at(-1))||[]).length);
+  $("stats").textContent=`“${q}” 검색 결과 ${matches.length.toLocaleString()}개`;
+  $("oneCount").textContent=`${one.length.toLocaleString()}개`;
+  $("rootCount").textContent=`${root.length.toLocaleString()}개`;
+  $("allCount").textContent=`${matches.length.toLocaleString()}개`;
+  addWords("one",one); addWords("root",root); addWords("all",matches);
+}
+(async()=>{
+  const data=await fetch("words.json").then(r=>r.json());
+  WORDS=data.words;
+  WORDS.forEach(w=>{const k=w[0]; if(!byStart.has(k))byStart.set(k,[]);byStart.get(k).push(w)});
+  $("stats").textContent=`전용 단어 ${WORDS.length.toLocaleString()}개 로드 완료`;
+  const qs=["가","나","다","락","슘","늄"];
+  qs.forEach(x=>{const b=document.createElement("button");b.textContent=x;b.onclick=()=>{$("q").value=x;search()};$("quick").appendChild(b)});
+  $("go").onclick=search;
+  $("q").addEventListener("keydown",e=>{if(e.key==="Enter")search()});
+})().catch(e=>{$("stats").textContent="단어 파일을 불러오지 못했습니다: "+e.message});
+</script>
+</body></html>
