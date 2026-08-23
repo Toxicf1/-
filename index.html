@@ -1,0 +1,106 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>로블록스 끝말잇기 검색기</title>
+<style>
+:root{--bg:#0d1117;--panel:#161b22;--line:#30363d;--text:#e6edf3;--muted:#8b949e;--accent:#58a6ff;--pink:#ff6aa2;--green:#3fb950;--yellow:#d29922;--red:#f85149}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font-family:system-ui,-apple-system,"Noto Sans KR",sans-serif}
+main{max-width:1100px;margin:auto;padding:24px 14px 70px}h1{font-size:27px;margin:0 0 5px}.sub{font-size:13px;color:var(--muted);line-height:1.6}
+.search{display:flex;gap:8px;margin:18px 0}.search input{flex:1;min-width:0;padding:15px;border-radius:13px;border:1px solid var(--line);background:var(--panel);color:var(--text);font-size:18px}.search button{border:0;border-radius:13px;padding:0 20px;background:var(--accent);font-weight:800;font-size:16px}
+.quick{display:flex;gap:7px;flex-wrap:wrap;margin-bottom:14px}.quick button,.word{background:#21262d;color:var(--text);border:1px solid var(--line);border-radius:9px;padding:8px 10px;cursor:pointer}.quick button{border-radius:999px}.word:hover,.quick button:hover{border-color:var(--accent)}
+.stats{font-size:13px;color:var(--muted);margin:12px 0 18px}.section{background:var(--panel);border:1px solid var(--line);border-radius:16px;padding:15px;margin:12px 0}.section h2{font-size:18px;margin:0 0 4px}.hint{font-size:12px;color:var(--muted);margin:0 0 11px;line-height:1.5}.count{font-size:12px;color:var(--accent);margin-bottom:9px}.list{display:flex;flex-wrap:wrap;gap:7px;max-height:480px;overflow:auto}.empty{color:var(--muted);padding:8px 0}.attack h2{color:#ffb6cf}.root h2{color:#9fd2ff}.cycle h2{color:#9de5c1}.yield h2{color:#ffd17a}.special h2{color:#c6b3ff}
+footer{font-size:12px;color:var(--muted);line-height:1.65;border-top:1px solid var(--line);margin-top:24px;padding-top:15px}
+@media(max-width:600px){main{padding:18px 10px 60px}.search button{padding:0 14px}.list{max-height:360px}}
+</style>
+</head>
+<body>
+<main>
+<h1>로블록스 끝말잇기 검색기</h1>
+<div class="sub">전용 단어 목록을 기반으로 1수·2수·3수 이상의 공격 구조를 역산합니다.</div>
+
+<div class="search">
+  <input id="q" placeholder="예: 가, 제, 락" autocomplete="off">
+  <button id="go">검색</button>
+</div>
+<div class="quick" id="quick"></div>
+<div class="stats" id="stats">데이터 불러오는 중…</div>
+<div id="results"></div>
+
+<footer>
+  공격 단어는 마지막 글자 상태를 역산해 “상대가 최선으로 버텨도 강제 승리가 가능한 구조”를 수별로 분류합니다.
+  루트/순환은 남는 순환 구조를 따로 표시하며, 별도 제공된 주요 루트 목록이 있는 글자는 그 목록도 함께 표시합니다.
+</footer>
+</main>
+
+<script>
+let WORDS=[], A={}, ROOTS={}, STARTS={};
+const $=x=>document.getElementById(x);
+
+function esc(s){return s.replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));}
+function section(title, hint, words, cls=""){
+  const s=document.createElement("section"); s.className="section "+cls;
+  s.innerHTML=`<h2>${esc(title)}</h2><p class="hint">${esc(hint)}</p><div class="count">${words.length.toLocaleString()}개</div>`;
+  const list=document.createElement("div"); list.className="list";
+  if(!words.length){list.innerHTML='<div class="empty">없음</div>';}
+  else{
+    words.slice(0,800).forEach(w=>{
+      const b=document.createElement("button"); b.className="word"; b.textContent=w;
+      b.onclick=()=>{const n=w.at(-1); $("q").value=n; search(); window.scrollTo({top:0,behavior:"smooth"});};
+      list.appendChild(b);
+    });
+    if(words.length>800){const d=document.createElement("div");d.className="empty";d.textContent=`처음 800개만 표시`;list.appendChild(d);}
+  }
+  s.appendChild(list); return s;
+}
+
+function classify(w){
+  const end=w.at(-1), info=A[end]||{state:"L",distance:0,cyclic:false};
+  if(info.state==="L") return {type:"attack", n:Math.floor((info.distance||0)/2)+1};
+  if(info.state==="D" && info.cyclic) return {type:"cycle"};
+  if(info.state==="D") return {type:"root"};
+  return {type:"yield"};
+}
+
+function search(){
+  const q=$("q").value.trim();
+  const box=$("results"); box.innerHTML="";
+  if(!q){$("stats").textContent="검색할 글자나 단어를 입력하세요.";return;}
+  const matches=WORDS.filter(w=>w.startsWith(q));
+  $("stats").textContent=`“${q}”로 시작하는 단어 ${matches.length.toLocaleString()}개`;
+
+  const attacks=new Map(), roots=[], cycles=[], yields=[];
+  for(const w of matches){
+    const c=classify(w);
+    if(c.type==="attack"){if(!attacks.has(c.n))attacks.set(c.n,[]);attacks.get(c.n).push(w);}
+    else if(c.type==="root") roots.push(w);
+    else if(c.type==="cycle") cycles.push(w);
+    else yields.push(w);
+  }
+
+  [...attacks.keys()].sort((a,b)=>a-b).forEach(n=>{
+    box.appendChild(section(`공격 단어 · ${n}수 이내 승리`, `${n===1?"상대가 바로 이어갈 수 없는 종착 구조입니다.":"상대의 선택을 고려해도 강제 승리 구조로 이어집니다."}`, attacks.get(n), "attack"));
+  });
+
+  if(q.length===1 && ROOTS[q]){
+    box.appendChild(section("주요 루트 단어", "별도로 제공된 주요 루트 단어 목록 기준입니다.", ROOTS[q], "special"));
+  }
+  box.appendChild(section("루트 구조 후보", "승패가 단순한 강제 승리/패배로 확정되지 않는 연결 구조입니다.", roots, "root"));
+  box.appendChild(section("순환단어 후보", "같은 미결 순환 구조 안으로 다시 연결되는 단어입니다.", cycles, "cycle"));
+  box.appendChild(section("양보·상대 우세 후보", "이 단어 뒤 상태가 상대의 강제 승리 구조로 판정된 경우입니다.", yields, "yield"));
+}
+
+(async()=>{
+  const data=await fetch("data.json").then(r=>r.json());
+  WORDS=data.words; A=data.analysis; ROOTS=data.mainRoots||{};
+  $("stats").textContent=`전용 단어 ${WORDS.length.toLocaleString()}개 · 분석 완료`;
+  ["가","제","락","슘","늄","객"].forEach(x=>{
+    const b=document.createElement("button");b.textContent=x;b.onclick=()=>{$("q").value=x;search()};$("quick").appendChild(b);
+  });
+  $("go").onclick=search;
+  $("q").addEventListener("keydown",e=>{if(e.key==="Enter")search();});
+})().catch(e=>{$("stats").textContent="데이터를 불러오지 못했습니다: "+e.message;});
+</script>
+</body>
+</html>
