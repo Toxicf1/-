@@ -1,0 +1,137 @@
+<!doctype html>
+<html lang="ko"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>로블록스 끝말잇기 AI 추천기</title>
+<style>
+body{margin:auto;max-width:950px;padding:18px;background:#0d1117;color:#e6edf3;font-family:system-ui,-apple-system,"Noto Sans KR",sans-serif}
+h1{margin:0 0 6px}.sub{color:#8b949e;font-size:13px;line-height:1.6}.box{background:#161b22;border:1px solid #30363d;border-radius:15px;padding:14px;margin:14px 0}
+.row{display:flex;gap:8px;margin:10px 0}input{flex:1;min-width:0;padding:14px;border:1px solid #30363d;border-radius:10px;background:#0d1117;color:#fff;font-size:17px}
+button{padding:12px 15px;border:0;border-radius:10px;background:#58a6ff;font-weight:800}.gray{background:#30363d;color:#fff}
+#answer{font-size:24px;font-weight:900;margin:12px 0}.muted{color:#8b949e;font-size:13px}.allowed{color:#ff9dbb;font-weight:800}.chat{max-height:300px;overflow:auto}.msg{padding:9px 11px;border-radius:10px;margin:7px 0;background:#21262d}.me{text-align:right;background:#1f6feb}
+.word{background:#21262d;color:#fff;border:1px solid #30363d;margin:3px;padding:8px}.bad{color:#ff9dbb}.good{color:#7ee787}
+</style></head><body>
+<h1>로블록스 끝말잇기 AI 추천기</h1>
+<div class="sub">상대가 낸 단어를 입력하면, 두음법칙을 적용해서 AI가 이어갈 후보를 분석하고 추천합니다.</div>
+
+<div class="box">
+<div class="row"><input id="input" placeholder="상대가 낸 단어 입력 (예: 늘름)"><button onclick="analyze()">AI 추천</button></div>
+<div id="rule" class="muted">단어를 입력하세요.</div>
+<div id="answer">추천 단어: -</div>
+<div id="reason" class="muted"></div>
+</div>
+
+<div class="box">
+<div class="row"><button class="gray" onclick="reset()">새 게임</button></div>
+<div class="chat" id="history"></div>
+</div>
+
+<div class="box">
+<b>후보 보기</b>
+<div id="candidates" class="muted" style="margin-top:10px"></div>
+</div>
+
+<script>
+let W=[],S={},used=new Set();
+
+// 두음법칙: 한글 초성/모음/종성 분해 후 일반적인 ㄹ→ㄴ/ㅇ, ㄴ→ㅇ 변형을 계산
+function changeInitial(ch,newCho){
+ const cp=ch.codePointAt(0);
+ if(cp<0xAC00||cp>0xD7A3)return ch;
+ const x=cp-0xAC00, jong=x%28, jung=Math.floor(x/28)%21;
+ return String.fromCharCode(0xAC00+(newCho*21+jung)*28+jong);
+}
+function allowed(ch){
+ const out=new Set([ch]);
+ const cp=ch.codePointAt(0);
+ if(cp>=0xAC00&&cp<=0xD7A3){
+   const x=cp-0xAC00, jung=Math.floor(x/28)%21, cho=Math.floor(x/588);
+   // ㅑ ㅕ ㅖ ㅛ ㅠ ㅣ 계열에서 ㄹ/ㄴ → ㅇ
+   const iY=[2,3,6,7,12,17,20];
+   if(cho===5){ // ㄹ
+     out.add(changeInitial(ch,2)); // ㄴ
+     if(iY.includes(jung)) out.add(changeInitial(ch,11)); // ㅇ
+   }
+   if(cho===2 && iY.includes(jung)) out.add(changeInitial(ch,11)); // ㄴ→ㅇ
+ }
+ // 이 게임에서 실제로 쓰이는 끝글자 대응 보강
+ const extra={
+  "름":["늠","음"],"늠":["름","음"],"음":["름","늠"],
+  "륨":["늄","윰"],"늄":["륨","윰"],"윰":["륨","늄"],
+  "락":["낙"],"낙":["락"],"란":["난"],"난":["란"],"랑":["낭"],"낭":["랑"],
+  "력":["역"],"역":["력"],"령":["영"],"영":["령"],"례":["예"],"예":["례"],
+  "료":["요"],"요":["료"],"류":["유"],"유":["류"],"리":["이"],"이":["리"],
+  "녀":["여"],"여":["녀"],"뇨":["요"],"요":["료","뇨"],"뉴":["유"],"유":["류","뉴"],"니":["이"],"이":["리","니"]
+ };
+ (extra[ch]||[]).forEach(x=>out.add(x));
+ return [...out];
+}
+function getCandidates(last,ignoreUsed=false){
+ const out=[],seen=new Set();
+ for(const first of allowed(last)){
+  for(const w of(S[first]||[])){
+   if((ignoreUsed||!used.has(w))&&!seen.has(w)){seen.add(w);out.push(w);}
+  }
+ }
+ return out;
+}
+function countNext(word){
+ // 이 단어를 냈다고 가정하고 상대 후보 수 계산
+ const old=used.has(word); used.add(word);
+ const n=getCandidates(word.at(-1)).length;
+ if(!old)used.delete(word);
+ return n;
+}
+function score(word){
+ const n=countNext(word);
+ // 즉시 상대가 못 잇는 경우 최고점
+ if(n===0)return 1e12;
+ // 후보가 적을수록 좋게
+ let s=-n;
+ // 상대가 선택할 수 있는 각 글자 구조를 조금 더 평가
+ const rs=getCandidates(word.at(-1));
+ let traps=0, examined=0;
+ for(const r of rs.slice(0,120)){
+   const old=used.has(r);used.add(word);used.add(r);
+   const next=getCandidates(r.at(-1)).length;
+   if(!old)used.delete(r);used.delete(word);
+   if(next===0)traps++;
+   examined++;
+ }
+ s+=traps*100000;
+ return s;
+}
+function msg(t,c=""){const d=document.createElement("div");d.className="msg "+c;d.textContent=t;history.appendChild(d);history.scrollTop=history.scrollHeight}
+function analyze(){
+ const w=input.value.trim(); input.value="";
+ if(!w)return;
+ if(!W.includes(w)){rule.textContent="이 단어는 현재 전용 단어 목록에 없습니다.";return}
+ if(used.has(w)){rule.textContent="이미 사용한 단어입니다.";return}
+ used.add(w); msg("상대: "+w,"me");
+ const last=w.at(-1), forms=allowed(last);
+ rule.innerHTML=`끝 글자 <b>${last}</b> → 허용 시작 글자: <span class="allowed">${forms.join(" / ")}</span>`;
+ const cs=getCandidates(last);
+ if(!cs.length){answer.textContent="추천 단어: 없음";reason.textContent="현재 단어 목록과 두음법칙 규칙 기준으로 AI가 이어갈 단어가 없습니다.";return}
+ let best=[],bestScore=-Infinity;
+ const pool=cs.length>6000?cs.slice(0,6000):cs;
+ for(const c of pool){
+  const sc=score(c);
+  if(sc>bestScore){bestScore=sc;best=[c]}
+  else if(sc===bestScore)best.push(c);
+ }
+ const pick=best[Math.floor(Math.random()*best.length)];
+ used.add(pick);
+ answer.textContent="AI 추천 단어: "+pick;
+ const next=countNext(pick);
+ reason.innerHTML=next===0?'<span class="good">상대가 바로 이을 후보가 없어 즉시 승리 후보입니다.</span>':`상대의 다음 후보 수를 분석해 선택했습니다. 상대 후보 약 ${next.toLocaleString()}개.`;
+ msg("AI 추천: "+pick);
+ candidates.innerHTML="";
+ cs.slice(0,500).forEach(x=>{const b=document.createElement("button");b.className="word";b.textContent=x;b.onclick=()=>{used.delete(pick);input.value=x;analyze()};candidates.appendChild(b)});
+}
+function reset(){used=new Set();history.innerHTML="";answer.textContent="추천 단어: -";reason.textContent="";rule.textContent="단어를 입력하세요.";candidates.innerHTML=""}
+(async()=>{
+ const d=await fetch("data.json").then(r=>r.json());W=d.words;
+ for(const w of W)(S[w[0]]??=[]).push(w);
+ document.getElementById("input").addEventListener("keydown",e=>{if(e.key==="Enter")analyze()});
+ rule.textContent=`전용 단어 ${W.length.toLocaleString()}개를 불러왔습니다.`;
+})().catch(e=>rule.textContent="데이터를 불러오지 못했습니다: "+e.message);
+</script></body></html>
