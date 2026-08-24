@@ -1,0 +1,1 @@
+GitHub Pages에 index.html과 data.json을 업로드하세요.
